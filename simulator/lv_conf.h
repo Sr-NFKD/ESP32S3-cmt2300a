@@ -1,0 +1,20 @@
+#ifndef LV_CONF_H
+#define LV_CONF_H
+
+#define LV_COLOR_DEPTH 16
+#define LV_DEF_REFR_PERIOD 5
+#define LV_USE_OS LV_OS_WINDOWS
+#define LV_USE_WINDOWS 1
+#define LV_USE_SNAPSHOT 1
+#define LV_USE_LOG 0
+#define LV_USE_ASSERT_NULL 1
+#define LV_USE_ASSERT_MALLOC 1
+#define LV_FONT_MONTSERRAT_14 1
+#define LV_FONT_MONTSERRAT_10 1
+#define LV_FONT_MONTSERRAT_36 1
+#define LV_FONT_DEFAULT &lv_font_montserrat_14
+#define LV_USE_DEMO_WIDGETS 0
+#define LV_USE_DEMO_BENCHMARK 0
+#define LV_BUILD_EXAMPLES 0
+
+#endif

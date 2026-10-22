@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>射频管家 · 调试</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,"Microsoft YaHei",sans-serif;background:#0e1016;color:#f2f3f7}*{box-sizing:border-box}body{margin:0;padding:32px 20px;background:radial-gradient(ellipse at top,#25203e,transparent 65%);min-height:100vh}main{max-width:560px;margin:0 auto}.tag{color:#bba2ff;font-size:12px;letter-spacing:2px}h1{font-size:30px;margin:12px 0 10px}p{color:#aeb5c7;line-height:1.7}.card{margin-top:24px;padding:24px;border:1px solid #363244;border-radius:20px;background:#191b24}.device{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}.device span{display:block;color:#979faf;font-size:12px;margin-bottom:5px}.device strong{font-size:14px;overflow-wrap:anywhere}.file{display:block;padding:22px 14px;border:1px dashed #79708d;border-radius:12px;color:#d9d1ee}input{width:100%;margin-top:12px;font:inherit;font-size:13px}button{width:100%;margin-top:20px;padding:14px;border:0;border-radius:12px;font:inherit;font-weight:700;background:#b49af5;color:#191525;cursor:pointer}button:disabled{opacity:.4;cursor:default}progress{display:block;width:100%;height:10px;margin-top:24px;accent-color:#b49af5}#status{min-height:28px;margin-bottom:0;font-size:14px}small{display:block;color:#949aac;line-height:1.7;margin-top:16px}.error{color:#ff9aab!important}.success{color:#7ce0b3!important}footer{margin-top:24px;color:#788091;text-align:center;font-size:12px}
+</style>
+<style>
+main{max-width:900px}h2{font-size:20px;margin:0 0 8px}.toolbar,.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.toolbar{margin:18px 0}.toolbar button,.actions button{width:auto;margin:0;padding:9px 14px;font-size:13px}.secondary{background:#303342;color:#e2e5ef}.danger{background:#482733;color:#ffadba}.toolbar label{font-size:14px;margin-right:auto}.check{width:auto;margin:0 8px 0 0;accent-color:#b49af5}.signal{padding:18px 0;border-top:1px solid #343644}.signal-head{display:flex;align-items:center;gap:8px;color:#91dabb;font-size:12px;margin-bottom:12px}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}.fields label{font-size:12px;color:#b3bbcc}.fields input{background:#10131b;color:#f2f3f7;border:1px solid #464b5e;padding:10px;border-radius:8px;margin-top:6px;font-size:14px}.options{display:grid;gap:12px;margin-top:20px;font-size:14px}.options label{display:flex;align-items:center}.options small{margin:4px 0 0 24px;font-size:12px}.empty{padding:24px 0;text-align:center;color:#aeb5c7}#library-status{font-size:13px;min-height:22px}.code{font-family:ui-monospace,monospace}.card{padding:24px}.firmware-card{max-width:900px}@media(max-width:520px){body{padding:24px 12px}.card{padding:18px}.fields{grid-template-columns:1fr}h1{font-size:26px}.toolbar{gap:10px}}
+</style>
+</head>
+<body><main>
+<div class="tag">RF MANAGER / DEBUG</div><h1>射频管家</h1>
+<p>管理已保存的信号，或上传新固件。所有修改均保存在设备中。</p>
+<section class="card" aria-labelledby="library-title">
+<h2 id="library-title">信号库 <span id="count">0</span></h2>
+<p>重命名、修改键码和导出。键码使用十六进制字符，保留前导零。</p>
+<div class="toolbar"><label><input class="check" id="select-all" type="checkbox">全选</label><button class="secondary" id="refresh">刷新</button><button class="secondary" id="export-selected" disabled>导出选中</button><button id="export-all" disabled>全部导出</button></div>
+<div id="signals" aria-live="polite"><p class="empty">正在读取信号…</p></div>
+<p id="library-status" role="status"></p>
+</section>
+<section class="card">
+<h2>固件升级</h2><p>上传应用固件后，设备会校验并自动重启。</p>
+<div class="device"><div><span>设备型号</span><strong id="chip">ESP32-S3</strong></div><div><span>当前版本</span><strong id="version">正在读取…</strong></div><div><span>项目</span><strong id="project">—</strong></div><div><span>可上传大小</span><strong id="limit">正在读取…</strong></div></div>
+<label class="file">选择应用固件 .bin<input id="firmware" type="file" accept=".bin,application/octet-stream"></label>
+<div class="options"><div><label><input class="check" id="retain-data" type="checkbox" checked>保留用户资料</label><small>保留已保存的信号；取消后，新固件成功启动时清空信号库。</small></div><div><label><input class="check" id="reset-settings" type="checkbox">重置设置</label><small>恢复设备设置为默认值，不影响上面的信号保留选项。</small></div></div>
+<button id="upload" disabled>上传并升级</button><progress id="progress" max="100" value="0"></progress>
+<p id="status" role="status" aria-live="polite">请先选择固件文件。</p>
+</section><footer>连接设备热点后使用，无需互联网</footer>
+</main>
+<script>
+const fileInput=document.getElementById('firmware'),button=document.getElementById('upload'),status=document.getElementById('status'),progress=document.getElementById('progress');
+let maxSize=0,expectedProject="",ready=false,busy=false;
+function message(text,kind=''){status.textContent=text;status.className=kind;}
+function syncButton(){button.disabled=!ready||busy||!fileInput.files.length;}
+async function loadInfo(){try{const response=await fetch('/api/info',{cache:'no-store'});if(!response.ok)throw new Error('无法读取设备信息');const info=await response.json();maxSize=info.max_size;expectedProject=info.project;document.getElementById('chip').textContent=info.chip;document.getElementById('version').textContent=info.version;document.getElementById('project').textContent=info.project;document.getElementById('limit').textContent=(maxSize/1024/1024).toFixed(2)+' MB';ready=maxSize>0;if(!ready)message('设备没有可用的 OTA 分区。','error');syncButton();}catch(error){message('无法连接设备，请确认已连接调试热点。','error');}}
+fileInput.addEventListener('change',()=>{progress.value=0;message(fileInput.files.length?'已选择 '+fileInput.files[0].name:'请先选择固件文件。');syncButton();});
+button.addEventListener('click',async()=>{if(busy||libraryBusy||!ready)return;const file=fileInput.files[0];if(!file)return;if(!/\.bin$/i.test(file.name)||file.size<288||file.size>maxSize){message('文件类型或大小不符合要求，请选择正确的应用 .bin。','error');return;}const header=new Uint8Array(await file.slice(0,288).arrayBuffer());if(header[0]!==0xe9||header[12]!==9||header[13]!==0||new DataView(header.buffer).getUint32(32,true)!==0xabcd5432||new TextDecoder().decode(header.slice(80,112)).split('\0')[0]!==expectedProject){message('这不是本项目的 ESP32-S3 应用固件。','error');return;}if(!window.confirm('确认上传 '+file.name+' 并重启设备？'+(!document.getElementById('retain-data').checked?'\n成功启动后将清空信号库。':'')+(document.getElementById('reset-settings').checked?'\n设备设置将恢复默认。':'')))return;busy=true;fileInput.disabled=true;document.getElementById('retain-data').disabled=true;document.getElementById('reset-settings').disabled=true;renderSignals();syncButton();message('正在上传，请保持连接…');const request=new XMLHttpRequest();request.open('POST','/api/ota');request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RF-OTA','1');request.setRequestHeader('X-RF-Retain',document.getElementById('retain-data').checked?'1':'0');request.setRequestHeader('X-RF-Reset',document.getElementById('reset-settings').checked?'1':'0');request.timeout=120000;request.upload.onprogress=event=>{if(event.lengthComputable){progress.value=Math.round(event.loaded/event.total*100);message(progress.value===100?'上传完成，正在写入和校验…':'正在上传 '+progress.value+'%');}};function retry(text){busy=false;fileInput.disabled=false;document.getElementById('retain-data').disabled=false;document.getElementById('reset-settings').disabled=false;renderSignals();syncButton();message(text,'error');}request.onload=()=>{if(request.status!==200){retry('升级失败：'+request.responseText);return;}try{const result=JSON.parse(request.responseText);if(!result.ok)throw new Error('校验失败');progress.value=100;message(result.message,'success');button.textContent='升级完成';}catch(error){retry('设备响应异常，请检查设备日志。');}};request.onerror=()=>retry('连接中断，请重新连接设备后再试。');request.ontimeout=()=>retry('上传超时，请检查 Wi-Fi 连接。');request.send(file);});
+loadInfo();
+const list=document.getElementById('signals'),libraryStatus=document.getElementById('library-status');
+const selected=new Set();
+let records=[],libraryBusy=false;
+function libraryMessage(text,kind=''){libraryStatus.textContent=text;libraryStatus.className=kind;}
+function syncSelection(){
+  document.getElementById('export-selected').disabled=busy||libraryBusy||!selected.size;
+  document.getElementById('export-all').disabled=busy||libraryBusy||!records.length;
+  const all=document.getElementById('select-all');
+  all.checked=records.length>0&&selected.size===records.length;
+  all.indeterminate=selected.size>0&&selected.size<records.length;
+}
+function element(tag,text,className=''){const node=document.createElement(tag);node.textContent=text;node.className=className;return node;}
+function downloadSignals(items,name){
+  if(!items.length)return;
+  const blob=new Blob([JSON.stringify({format:'rf-manager-signals',version:1,signals:items},null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  libraryMessage('已导出 '+items.length+' 个信号。','success');
+}
+async function mutateSignal(route,data){
+  if(busy||libraryBusy)return false;
+  libraryBusy=true;renderSignals();libraryMessage('正在保存…');
+  try{
+    const response=await fetch(route,{method:'POST',headers:{'Content-Type':'application/json','X-RF-API':'1'},body:JSON.stringify(data)});
+    if(!response.ok)throw new Error(await response.text());
+    const result=await response.json();if(!result.ok)throw new Error('设备未保存修改');
+    if(await loadSignals())libraryMessage('已保存到设备。','success');return true;
+  }catch(error){libraryMessage('操作失败：'+error.message,'error');return false;}
+  finally{libraryBusy=false;renderSignals();}
+}
+function renderSignals(){
+  list.replaceChildren();document.getElementById('count').textContent=records.length;
+  if(!records.length)list.append(element('p','暂无已保存的信号。','empty'));
+  for(const record of records){
+    const card=element('article','','signal'),head=element('div','','signal-head');
+    const check=document.createElement('input');check.type='checkbox';check.className='check';check.checked=selected.has(record.id);check.disabled=busy||libraryBusy;check.setAttribute('aria-label','选择 '+record.name);
+    check.addEventListener('change',()=>{check.checked?selected.add(record.id):selected.delete(record.id);syncSelection();});
+    head.append(check,element('span','#'+record.id+(record.frequency_hz?' · '+(record.frequency_hz/1e6).toFixed(3)+' MHz':'')));
+    const fields=element('div','','fields'),name=document.createElement('input'),code=document.createElement('input');
+    const mapped=record.protocol==='RAW'&&Number.isInteger(record.button_code)&&record.button_code>=0&&record.button_code<=255;
+    name.value=record.name;name.maxLength=63;code.value=mapped?record.button_code.toString(16).toUpperCase().padStart(2,'0'):record.key_code;code.maxLength=mapped?2:128;code.className='code';code.spellcheck=false;code.readOnly=record.protocol==='RAW'&&!mapped;
+    name.disabled=code.disabled=busy||libraryBusy;
+    const nameLabel=element('label','名称'),codeLabel=element('label',mapped?'键码（末尾字段，十六进制）':record.protocol==='RAW'?'原始波形（键码只读）':'键码（十六进制）');nameLabel.append(name);codeLabel.append(code);fields.append(nameLabel,codeLabel);
+    const actions=element('div','','actions'),save=element('button','保存'),exportButton=element('button','导出','secondary'),remove=element('button','删除','danger');
+    save.disabled=exportButton.disabled=remove.disabled=busy||libraryBusy;
+    save.addEventListener('click',()=>{
+      const value=name.value.trim(),key=code.value.trim();
+      if(mapped&&!/^[0-9a-fA-F]{2}$/.test(key)){libraryMessage('末尾字段请填写两位十六进制字符（00～FF）。','error');return;}
+      if(!value||new TextEncoder().encode(value).length>63||/[\x00-\x1f\x7f]/.test(value)||! /^[0-9a-fA-F]{1,128}$/.test(key)){libraryMessage('名称最多 63 字节，键码请填写 1～128 位十六进制字符。','error');return;}
+      mutateSignal('/api/signals/update',{id:record.id,name:value,key_code:key});
+    });
+    exportButton.addEventListener('click',()=>downloadSignals([record],'signal-'+record.id+'.json'));
+    remove.addEventListener('click',()=>{if(window.confirm('删除“'+record.name+'”？此操作不能撤销。'))mutateSignal('/api/signals/delete',{id:record.id});});
+    actions.append(save,exportButton,remove);card.append(head,fields,actions);list.append(card);
+  }
+  document.getElementById('refresh').disabled=busy||libraryBusy;
+  document.getElementById('select-all').disabled=busy||libraryBusy||!records.length;
+  syncSelection();
+}
+async function loadSignals(){
+  try{
+    const response=await fetch('/api/signals',{cache:'no-store'});
+    if(!response.ok)throw new Error('无法读取信号库');
+    const data=await response.json();if(!Array.isArray(data))throw new Error('信号库格式错误');
+    records=data;for(const id of selected)if(!records.some(record=>record.id===id))selected.delete(id);
+    renderSignals();return true;
+  }catch(error){libraryMessage(error.message+'，请重新连接热点后刷新。','error');return false;}
+}
+document.getElementById('select-all').addEventListener('change',event=>{selected.clear();if(event.target.checked)records.forEach(record=>selected.add(record.id));renderSignals();});
+document.getElementById('refresh').addEventListener('click',()=>{if(!busy&&!libraryBusy){libraryMessage('');loadSignals();}});
+document.getElementById('export-selected').addEventListener('click',()=>downloadSignals(records.filter(record=>selected.has(record.id)),'signals-selected.json'));
+document.getElementById('export-all').addEventListener('click',()=>downloadSignals(records,'signals-all.json'));
+loadSignals();
+</script>
+</body></html>
